@@ -188,7 +188,8 @@ function Test-CIPPAccessTenant {
                 Write-Information "Found $($OrgManagementRoles.Count) Organization Management roles in Exchange"
                 $Results.OrgManagementRoles = $OrgManagementRoles
 
-                $RoleDefinitions = New-GraphGetRequest -tenantid $Tenant.customerId -uri 'https://graph.microsoft.com/beta/roleManagement/exchange/roleDefinitions'
+                # Exchange role definitions fail with delegated GDAP tokens; direct tenants retain their own delegated authentication.
+                $RoleDefinitions = New-GraphGetRequest -tenantid $Tenant.customerId -uri 'https://graph.microsoft.com/beta/roleManagement/exchange/roleDefinitions' -AsApp (-not $IsDirectTenant)
                 Write-Information "Found $($RoleDefinitions.Count) Exchange role definitions"
 
                 $OrgRolePath = Join-Path $env:CIPPRootPath 'Config\OrganizationManagementRoles.json'
