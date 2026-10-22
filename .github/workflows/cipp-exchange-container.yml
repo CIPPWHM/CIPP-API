@@ -1,0 +1,54 @@
+name: Build CIPP Exchange check correction
+on:
+  push:
+    branches: [fix/gdap-exchange-role-check]
+    paths: [.github/workflows/cipp-exchange-container.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare a guarded patch for the installed 11.2.1 image
+        shell: pwsh
+        run: |
+          @'
+          $ErrorActionPreference = 'Stop'
+          $path = '/work/CIPPCore.psm1'
+          $original = [IO.File]::ReadAllText($path)
+          $old = '$RoleDefinitions = New-GraphGetRequest -tenantid $Tenant.customerId -uri ''https://graph.microsoft.com/beta/roleManagement/exchange/roleDefinitions'''
+          $new = $old + ' -AsApp (-not $IsDirectTenant)'
+          $count = ([regex]::Matches($original, [regex]::Escape($old))).Count
+          if ($count -ne 1) { throw "Expected exactly one original Exchange check; found $count" }
+          $patched = $original.Replace($old, $new)
+          $tokens = $null
+          $errors = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseInput($patched, [ref]$tokens, [ref]$errors)
+          if ($errors.Count) { throw ($errors.Message -join '; ') }
+          [IO.File]::WriteAllText($path, $patched, [Text.UTF8Encoding]::new($false))
+          Write-Host 'Exactly one Exchange role-definition query corrected; module syntax valid.'
+          '@ | Set-Content Patch.ps1
+          @'
+          FROM ghcr.io/cyberdrain/cipp@sha256:d03570ebcaf189df85e5b64497a40861ff3ab320e7ee1c90ec4c5b082a4c8b72 AS installed
+          FROM ghcr.io/cyberdrain/dotnet/sdk:8.0-bookworm-slim AS patch
+          WORKDIR /work
+          COPY --from=installed /app/API/Modules/CIPPCore/CIPPCore.psm1 /work/CIPPCore.psm1
+          COPY Patch.ps1 /work/Patch.ps1
+          RUN pwsh -NoProfile -File /work/Patch.ps1
+          FROM installed
+          COPY --from=patch /work/CIPPCore.psm1 /app/API/Modules/CIPPCore/CIPPCore.psm1
+          LABEL org.opencontainers.image.source="https://github.com/CIPPWHM/CIPP-API"
+          LABEL org.opencontainers.image.description="CIPP 11.2.1 with guarded GDAP Exchange role-definition authentication correction"
+          '@ | Set-Content Dockerfile
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/cippwhm/cipp-exchangecheck:11.2.1-1
